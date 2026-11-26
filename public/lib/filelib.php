@@ -5234,9 +5234,13 @@ function file_pluginfile($relativepath, $forcedownload, $preview = null, $offlin
         $noteid = (int) array_shift($args);
 
         $note = $DB->get_record('post', ['module' => 'notes', 'id' => $noteid]);
+        if (!$note) {
+            send_file_not_found();
+        }
         $notecontext = \core\context\course::instance($note->courseid);
 
-        if ($context->id !== $notecontext->id || !has_capability('moodle/notes:view', $context)) {
+        require_once($CFG->dirroot . '/notes/lib.php');
+        if ($context->id !== $notecontext->id || !note_can_view($note)) {
             send_file_not_found();
         }
 

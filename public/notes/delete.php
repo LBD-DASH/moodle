@@ -42,7 +42,7 @@ if (!$user = $DB->get_record('user', array('id' => $note->userid))) {
 
 $context = context_course::instance($course->id);
 
-if (!has_capability('moodle/notes:manage', $context)) {
+if (!has_capability('moodle/notes:manage', $context) || !note_can_manage($note)) {
     throw new \moodle_exception('nopermissiontodelete', 'notes');
 }
 

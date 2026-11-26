@@ -64,6 +64,9 @@ if (empty($CFG->enablenotes)) {
 
 $context = context_course::instance($course->id);
 require_capability('moodle/notes:manage', $context);
+if ($note->id && !note_can_manage($note)) {
+    throw new \moodle_exception('nopermissions', 'error', '', get_string('editnote', 'notes'));
+}
 
 if (!$user = $DB->get_record('user', array('id' => $note->userid))) {
     throw new \moodle_exception('invaliduserid');
@@ -87,13 +90,19 @@ if ($noteform->is_cancelled()) {
 }
 
 // If data was submitted and validated, then save it to database.
-if ($note = $noteform->get_data()) {
-    if ($noteid) {
+if ($data = $noteform->get_data()) {
+    // Only the note checked above may be written, whatever ids were submitted.
+    $data->id = $note->id;
+    if ($note->id) {
         // A noteid has been used, we don't allow editing of course or user so
         // lets unset them to be sure we never change that by accident.
-        unset($note->courseid);
-        unset($note->userid);
+        unset($data->courseid);
+        unset($data->userid);
+    } else {
+        $data->courseid = $note->courseid;
+        $data->userid = $note->userid;
     }
+    $note = $data;
 
     // Extract editor content so it can be initially saved.
     $contenteditor = $note->content_editor;

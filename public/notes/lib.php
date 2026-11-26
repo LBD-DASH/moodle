@@ -94,6 +94,47 @@ function note_load($noteid) {
 }
 
 /**
+ * Whether the current user can view a note.
+ *
+ * Personal notes are visible only to their author.
+ *
+ * @param stdClass $note the note object, as returned by note_load()
+ * @return bool
+ */
+function note_can_view(stdClass $note): bool {
+    global $USER;
+
+    if (!has_capability('moodle/notes:view', context_course::instance($note->courseid))) {
+        return false;
+    }
+    if ($note->publishstate === NOTES_STATE_SITE || $note->publishstate === NOTES_STATE_PUBLIC) {
+        return true;
+    }
+    return $note->usermodified == $USER->id;
+}
+
+/**
+ * Whether the current user can edit or delete a note.
+ *
+ * Site notes can be managed by users with the system notes:manage capability, course notes by users with
+ * notes:manage in the note's course, and personal notes only by their author.
+ *
+ * @param stdClass $note the note object, as returned by note_load()
+ * @return bool
+ */
+function note_can_manage(stdClass $note): bool {
+    global $USER;
+
+    if ($note->publishstate === NOTES_STATE_SITE && has_capability('moodle/notes:manage', context_system::instance())) {
+        return true;
+    }
+    if (!has_capability('moodle/notes:manage', context_course::instance($note->courseid))) {
+        return false;
+    }
+    return $note->publishstate === NOTES_STATE_PUBLIC || $note->usermodified == $USER->id;
+}
+
+/**
  * Saves a note object. The note object is passed by reference and its fields (i.e. id)
  * might change during the save.
  *
@@ -240,7 +281,6 @@ function note_print($note, $detail = NOTES_SHOW_FULL) {
         return;
     }
     $context = context_course::instance($note->courseid);
-    $systemcontext = context_system::instance();
 
     $authoring = new stdClass();
     $authoring->name = '<a href="' . $CFG->wwwroot . '/user/view.php?id=' . $author->id .
@@ -273,9 +313,7 @@ function note_print($note, $detail = NOTES_SHOW_FULL) {
 
     // Print note options (e.g. delete, edit).
     if ($detail & NOTES_SHOW_FOOT) {
-        if (has_capability('moodle/notes:manage', $systemcontext) && $note->publishstate == NOTES_STATE_SITE ||
-            has_capability('moodle/notes:manage', $context) &&
-            ($note->publishstate == NOTES_STATE_PUBLIC || $note->usermodified == $USER->id)) {
+        if (note_can_manage($note)) {
             echo '<div class="footer"><p>';
             echo '<a href="' . $CFG->wwwroot . '/notes/edit.php?id=' . $note->id. '">' . get_string('edit') . '</a> | ';
             echo '<a href="' . $CFG->wwwroot . '/notes/delete.php?id=' . $note->id. '">' . get_string('delete') . '</a>';
