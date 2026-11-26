@@ -72,7 +72,7 @@ class get_gradable_users extends external_api {
      * @throws restricted_context_exception
      */
     public static function execute(int $courseid, ?int $groupid = 0, bool $onlyactive = false): array {
-        global $DB, $PAGE;
+        global $DB, $PAGE, $USER;
 
         $params = self::validate_parameters(
             self::execute_parameters(),
@@ -89,19 +89,53 @@ class get_gradable_users extends external_api {
 
         require_capability('moodle/course:viewparticipants', $coursecontext);
 
-        $course = $DB->get_record('course', ['id' => $params['courseid']]);
-        $onlyactive = $onlyactive || !has_capability('moodle/course:viewsuspendedusers', $coursecontext);
+        $course = $DB->get_record('course', ['id' => $params['courseid']], '*', MUST_EXIST);
+        $onlyactive = $params['onlyactive'] || !has_capability('moodle/course:viewsuspendedusers', $coursecontext);
 
-        $users = get_gradable_users($course->id, $params['groupid'], $onlyactive);
-        $users = array_map(function ($user) use ($PAGE) {
-            $user->fullname = fullname($user);
-            $user->initials = core_user::get_initials($user);
+        if (groups_get_course_groupmode($course) == SEPARATEGROUPS
+                && !has_capability('moodle/site:accessallgroups', $coursecontext)) {
+            $allowedgroupids = array_keys(groups_get_all_groups($course->id, $USER->id, $course->defaultgroupingid, 'g.id'));
+            if (empty($params['groupid'])) {
+                $groupids = $allowedgroupids;
+            } else if (in_array($params['groupid'], $allowedgroupids)) {
+                $groupids = [$params['groupid']];
+            } else {
+                $groupids = [];
+                $warnings[] = [
+                    'item' => 'group',
+                    'itemid' => $params['groupid'],
+                    'warningcode' => 'notmemberofgroup',
+                    'message' => get_string('notmemberofgroup', 'error'),
+                ];
+            }
+            $gradableusers = [];
+            foreach ($groupids as $allowedgroupid) {
+                $gradableusers += get_gradable_users($course->id, $allowedgroupid, $onlyactive);
+            }
+        } else {
+            $gradableusers = get_gradable_users($course->id, $params['groupid'], $onlyactive);
+        }
+
+        $extrauserfields = \core_user\fields::for_identity($coursecontext, false)
+            ->get_required_fields([\core_user\fields::PURPOSE_IDENTITY]);
+
+        $users = array_map(function ($user) use ($PAGE, $extrauserfields) {
+            $gradableuser = new \stdClass();
+            $gradableuser->id = $user->id;
+            $gradableuser->fullname = fullname($user);
+            $gradableuser->initials = core_user::get_initials($user);
+            foreach (\core_user\fields::get_name_fields() as $field) {
+                $gradableuser->$field = $user->$field ?? null;
+            }
             $userpicture = new user_picture($user);
             $userpicture->size = 1;
-            $user->profileimageurlsmall = $userpicture->get_url($PAGE)->out(false);
-            $user->profileimageurl = $userpicture->get_url($PAGE)->out(false);
-            return $user;
-        }, $users);
+            $gradableuser->profileimageurlsmall = $userpicture->get_url($PAGE)->out(false);
+            $gradableuser->profileimageurl = $userpicture->get_url($PAGE)->out(false);
+            foreach ($extrauserfields as $field) {
+                $gradableuser->$field = $user->$field ?? null;
+            }
+            return $gradableuser;
+        }, $gradableusers);
         sort($users);
 
         return [
