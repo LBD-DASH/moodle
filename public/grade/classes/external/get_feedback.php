@@ -84,8 +84,9 @@ class get_feedback extends external_api {
             throw new invalid_parameter_exception('Course ID and item ID mismatch');
         }
 
-        $grade = $gradeitem->get_grade($params['userid'], false);
-        $user = \core_user::get_user($params['userid']);
+        $user = self::get_visible_gradable_user($context, $gradeitem, $params['userid']);
+
+        $grade = $gradeitem->get_grade($user->id, false);
         $extrafields = \core_user\fields::get_identity_fields($context);
 
         return [
@@ -95,6 +96,73 @@ class get_feedback extends external_api {
             'picture' => $OUTPUT->user_picture($user, ['size' => 50, 'link' => false]),
             'additionalfield' => empty($extrafields) ? '' : $user->{$extrafields[0]},
         ];
+    }
+
+    /**
+     * Load the requested user only if they are shown to the current user in the grader report.
+     *
+     * The user must be enrolled in the course with a gradebook role and, when separate groups apply to the
+     * course or to the activity behind the grade item, share a group with the current user unless the current
+     * user can access all groups.
+     *
+     * @param \context_course $context The course context.
+     * @param \grade_item $gradeitem The grade item the feedback belongs to.
+     * @param int $userid The requested user ID.
+     * @return \stdClass The user record.
+     * @throws \moodle_exception If the user is not available to the current user.
+     */
+    protected static function get_visible_gradable_user(
+        \context_course $context,
+        \grade_item $gradeitem,
+        int $userid
+    ): \stdClass {
+        global $CFG, $DB;
+
+        $gradebookroles = array_filter(explode(',', $CFG->gradebookroles ?? ''));
+        if (empty($gradebookroles)) {
+            throw new \moodle_exception('usernotavailable', 'error');
+        }
+
+        $showonlyactiveenrol = get_user_preferences('grade_report_showonlyactiveenrol',
+            !empty($CFG->grade_report_showonlyactiveenrol));
+        $onlyactive = $showonlyactiveenrol || !has_capability('moodle/course:viewsuspendedusers', $context);
+
+        [$enrolledsql, $enrolledparams] = get_enrolled_sql($context, '', 0, $onlyactive);
+        [$rolesql, $roleparams] = $DB->get_in_or_equal($gradebookroles, SQL_PARAMS_NAMED, 'grbr');
+        [$ctxsql, $ctxparams] = $DB->get_in_or_equal($context->get_parent_context_ids(true), SQL_PARAMS_NAMED, 'relatedctx');
+
+        $sql = "SELECT u.*
+                  FROM {user} u
+                  JOIN ($enrolledsql) je ON je.id = u.id
+                 WHERE u.id = :targetuserid
+                   AND u.deleted = 0
+                   AND EXISTS (
+                           SELECT 1
+                             FROM {role_assignments} ra
+                            WHERE ra.userid = u.id
+                              AND ra.roleid $rolesql
+                              AND ra.contextid $ctxsql
+                       )";
+        $params = array_merge($enrolledparams, $roleparams, $ctxparams, ['targetuserid' => $userid]);
+        $user = $DB->get_record_sql($sql, $params);
+        if (!$user) {
+            throw new \moodle_exception('usernotavailable', 'error');
+        }
+
+        $course = get_course($context->instanceid);
+        if (!groups_user_groups_visible($course, $user->id)) {
+            throw new \moodle_exception('usernotavailable', 'error');
+        }
+
+        if ($gradeitem->itemtype === 'mod') {
+            $instances = get_fast_modinfo($course)->get_instances_of($gradeitem->itemmodule);
+            $cm = $instances[$gradeitem->iteminstance] ?? null;
+            if ($cm && !groups_user_groups_visible($course, $user->id, $cm)) {
+                throw new \moodle_exception('usernotavailable', 'error');
+            }
+        }
+
+        return $user;
     }
 
     /**
