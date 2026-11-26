@@ -626,7 +626,9 @@ class manager {
             $c->avatar = $OUTPUT->user_picture($u, ['size' => 16]);
             $c->userid = $u->id;
 
-            if ($this->can_delete($c)) {
+            // The query above already limits rows to this comment area.
+            $this->validate(['commentid' => $c->id]);
+            if ($this->user_can_delete($c)) {
                 $c->delete = true;
             }
             $comments[] = $c;
@@ -849,20 +851,29 @@ class manager {
      */
     public function delete($comment) {
         global $DB;
-        if (is_object($comment)) {
-            $commentid = $comment->id;
-        } else {
-            $commentid = $comment;
-            $comment = $DB->get_record('comments', ['id' => $commentid]);
-        }
+        $commentid = is_object($comment) ? $comment->id : $comment;
 
+        // Authorise against the stored row, never a caller-supplied record.
+        $comment = $DB->get_record('comments', ['id' => $commentid]);
         if (!$comment) {
             throw new comment_exception('dbupdatefailed');
         }
         if (!$this->can_delete($comment)) {
             throw new comment_exception('nopermissiontocomment');
         }
-        $DB->delete_records('comments', ['id' => $commentid]);
+
+        // Only remove the row if it still has the identity that was authorised above.
+        $DB->delete_records('comments', [
+            'id' => $comment->id,
+            'contextid' => $comment->contextid,
+            'component' => $comment->component,
+            'commentarea' => $comment->commentarea,
+            'itemid' => $comment->itemid,
+            'userid' => $comment->userid,
+        ]);
+        if ($DB->record_exists('comments', ['id' => $comment->id])) {
+            throw new comment_exception('nopermissiontocomment');
+        }
         // Trigger comment delete event.
         if (core_component::is_core_subsystem($this->component)) {
             $eventclassname = '\\core\\event\\' . $this->component . '_comment_deleted';
@@ -1043,16 +1054,17 @@ class manager {
     /**
      * Returns true if the user can delete this comment.
      *
+     * The comment must belong to this comment area (context, component, area and itemid).
      * The user can delete comments if it is one they posted and they can still make posts,
      * or they have the capability to delete comments.
      *
-     * A database call is avoided if a comment record is passed.
+     * A database call is avoided if a full comment record is passed.
      *
      * @param int|stdClass $comment The id of a comment, or a comment record.
      * @return bool
      */
     public function can_delete($comment) {
-        global $USER, $DB;
+        global $DB;
         if (is_object($comment)) {
             $commentid = $comment->id;
         } else {
@@ -1061,11 +1073,67 @@ class manager {
 
         $this->validate(['commentid' => $commentid]);
 
-        if (!is_object($comment)) {
-            // Get the comment record from the database.
-            $comment = $DB->get_record('comments', ['id' => $commentid], 'id, userid', MUST_EXIST);
+        if (!is_object($comment) || !$this->has_comment_scope_fields($comment)) {
+            $comment = $DB->get_record(
+                'comments',
+                ['id' => $commentid],
+                'id, userid, contextid, component, commentarea, itemid',
+                MUST_EXIST,
+            );
         }
 
+        if (!$this->comment_in_scope($comment)) {
+            return false;
+        }
+
+        return $this->user_can_delete($comment);
+    }
+
+    /**
+     * Whether the comment record carries every field needed to check it belongs to this comment area.
+     *
+     * @param stdClass $comment
+     * @return bool
+     */
+    private function has_comment_scope_fields(stdClass $comment): bool {
+        foreach (['userid', 'contextid', 'component', 'commentarea', 'itemid'] as $field) {
+            if (!property_exists($comment, $field)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether a stored comment belongs to this comment area.
+     *
+     * Comments with a null component predate the component field and match any component,
+     * consistent with {@see self::get_component_select_sql()}.
+     *
+     * @param stdClass $comment
+     * @return bool
+     */
+    private function comment_in_scope(stdClass $comment): bool {
+        if ((int) $comment->contextid !== $this->contextid) {
+            return false;
+        }
+        if ((string) $comment->commentarea !== $this->commentarea) {
+            return false;
+        }
+        if ((int) $comment->itemid !== $this->itemid) {
+            return false;
+        }
+        return $comment->component === null || (string) $comment->component === $this->component;
+    }
+
+    /**
+     * Whether the current user may delete a comment already known to belong to this comment area.
+     *
+     * @param stdClass $comment
+     * @return bool
+     */
+    private function user_can_delete(stdClass $comment): bool {
+        global $USER;
         $hascapability = has_capability('moodle/comment:delete', $this->context);
         $owncomment = $USER->id == $comment->userid;
 
