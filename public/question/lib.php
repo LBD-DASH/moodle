@@ -95,7 +95,8 @@ function core_question_output_fragment_question_data(array $args): string {
  */
 function core_question_output_fragment_category_selector(array $args): string {
     global $OUTPUT;
-    $context = \core\context\module::instance($args['bankcmid']);
+    $context = \core\context\module::instance(clean_param($args['bankcmid'], PARAM_INT));
+    \core_question\local\bank\question_bank_helper::require_category_list_access($context);
     $selector = new \core_question\output\question_category_selector([$context], autocomplete: true);
     return $OUTPUT->render($selector);
 }

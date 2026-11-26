@@ -32,6 +32,10 @@
 function qbank_bulkmove_output_fragment_bulk_move(array $args) {
     global $OUTPUT;
 
+    if (!$args['context'] instanceof \core\context\module) {
+        throw new \core\exception\access_denied_exception('nopermissions', 'error', '', get_string('categories', 'question'));
+    }
+    \core_question\local\bank\question_bank_helper::require_category_list_access($args['context']);
     $currentbankid = clean_param($args['context']->instanceid, PARAM_INT);
     $currentcategoryid = clean_param($args['categoryid'], PARAM_INT);
     $qbankcatchooser = new \qbank_bulkmove\output\bulk_move($currentbankid, $currentcategoryid);
