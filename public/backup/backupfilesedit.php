@@ -36,7 +36,6 @@ $filearea   = optional_param('filearea', null, PARAM_AREA);
 $returnurl  = optional_param('returnurl', null, PARAM_LOCALURL);
 
 list($context, $course, $cm) = get_context_info_array($currentcontext);
-$filecontext = context::instance_by_id($contextid, IGNORE_MISSING);
 
 $url = new moodle_url('/backup/backupfilesedit.php', array('currentcontext'=>$currentcontext, 'contextid'=>$contextid, 'component'=>$component, 'filearea'=>$filearea));
 
@@ -44,6 +43,34 @@ require_login($course, false, $cm);
 require_capability('moodle/restore:uploadfile', $context);
 if ($filearea == 'automated' && !can_download_from_backup_filearea($filearea, $context)) {
     throw new required_capability_exception($context, 'moodle/backup:downloadfile', 'nopermissions', '');
+}
+
+// The file context is derived from the authorised context, never taken from the request.
+// Only the backup areas that restorefile.php offers for this context can be managed here.
+$filecontext = null;
+$backuplevels = [CONTEXT_SYSTEM, CONTEXT_COURSECAT, CONTEXT_COURSE, CONTEXT_MODULE];
+if ($component === 'backup' && in_array($context->contextlevel, $backuplevels)) {
+    switch ($filearea) {
+        case 'course':
+            $filecontext = ($context->contextlevel == CONTEXT_MODULE) ? $context->get_course_context() : $context;
+            break;
+        case 'activity':
+            if ($context->contextlevel == CONTEXT_MODULE) {
+                $filecontext = $context;
+            }
+            break;
+        case 'automated':
+            $filecontext = $context;
+            break;
+    }
+} else if ($component === 'user' && $filearea === 'backup') {
+    $filecontext = context_user::instance($USER->id);
+}
+if ($filecontext === null || $filecontext->id != $contextid) {
+    throw new moodle_exception('invalidparameter', 'debug');
+}
+if ($component === 'backup') {
+    require_capability('moodle/restore:uploadfile', $filecontext);
 }
 
 $PAGE->set_url($url);
@@ -91,7 +118,7 @@ $browser = get_file_browser();
 $data = new stdClass();
 $options = array('subdirs'=>0, 'maxfiles'=>-1, 'accepted_types'=>'*', 'return_types'=>FILE_INTERNAL);
 file_prepare_standard_filemanager($data, 'files', $options, $filecontext, $component, $filearea, 0);
-$form = new backup_files_edit_form(null, array('data'=>$data, 'contextid'=>$contextid, 'currentcontext'=>$currentcontext, 'filearea'=>$filearea, 'component'=>$component, 'returnurl'=>$returnurl));
+$form = new backup_files_edit_form(null, array('data'=>$data, 'contextid'=>$filecontext->id, 'currentcontext'=>$currentcontext, 'filearea'=>$filearea, 'component'=>$component, 'returnurl'=>$returnurl));
 
 if ($form->is_cancelled()) {
     redirect($returnurl);
