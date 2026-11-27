@@ -222,6 +222,9 @@ class external_api {
                 } else {
                     require_sesskey();
                 }
+            } else if (!WS_SERVER && isloggedin() && ($externalfunctioninfo->type ?? 'write') !== 'read') {
+                // Optional login does not exempt a write from CSRF protection when it runs as the session user.
+                require_sesskey();
             }
             // Validate params, this also sorts the params properly, we need the correct order in the next part.
             $callable = [$externalfunctioninfo->classname, 'validate_parameters'];
