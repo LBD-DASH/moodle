@@ -410,7 +410,7 @@ class auth extends \auth_plugin_base {
      * @return void Either redirects or throws an exception
      */
     public function complete_login(client $client, $redirecturl) {
-        global $CFG, $SESSION, $PAGE;
+        global $CFG, $DB, $SESSION, $PAGE;
 
         $rawuserinfo = $client->get_raw_userinfo();
         $userinfo = $client->get_userinfo();
@@ -462,6 +462,7 @@ class auth extends \auth_plugin_base {
         $issuer = $client->get_issuer();
         // First we try and find a defined mapping.
         $linkedlogin = api::match_username_to_user($userinfo['username'], $issuer);
+        $relinkuser = null;
 
         if (!empty($linkedlogin) && empty($linkedlogin->get('confirmtoken'))) {
             $mappeduser = get_complete_user_data('id', $linkedlogin->get('userid'));
@@ -469,7 +470,7 @@ class auth extends \auth_plugin_base {
             if ($mappeduser && $mappeduser->suspended) {
                 // Check if there's another user with the same email that is not suspended.
                 $moodleuser = \core_user::get_user_by_email($userinfo['email'], '*', null, IGNORE_MULTIPLE);
-                if ($moodleuser->id == $mappeduser->id) {
+                if (empty($moodleuser) || $moodleuser->id == $mappeduser->id || $moodleuser->suspended) {
                     $failurereason = AUTH_LOGIN_SUSPENDED;
                     $event = \core\event\user_login_failed::create([
                         'userid' => $mappeduser->id,
@@ -482,16 +483,8 @@ class auth extends \auth_plugin_base {
                     $SESSION->loginerrormsg = get_string('invalidlogin');
                     $client->log_out();
                     redirect(new moodle_url('/login/index.php'));
-                } else if ($moodleuser && !$moodleuser->suspended) {
-                    // Update the OAuth2 linked login to point to the active user account.
-                    $linkedlogin->set('userid', $moodleuser->id);
-                    $linkedlogin->set('timemodified', time());
-                    $linkedlogin->update();
-
-                    // Update user fields and continue with login.
-                    $userinfo = $this->update_user($userinfo, $moodleuser);
-                    $userwasmapped = true;
                 }
+                $relinkuser = $moodleuser;
             } else if ($mappeduser && ($mappeduser->confirmed || !$issuer->get('requireconfirmation'))) {
                 // Update user fields.
                 $userinfo = $this->update_user($userinfo, $mappeduser);
@@ -532,6 +525,34 @@ class auth extends \auth_plugin_base {
             $SESSION->loginerrormsg = $errormsg;
             $client->log_out();
             redirect(new moodle_url('/login/index.php'));
+        }
+
+        if ($relinkuser) {
+            if ($issuer->get('requireconfirmation')) {
+                $PAGE->set_url('/auth/oauth2/confirm-link-login.php');
+                $PAGE->set_context(context_system::instance());
+
+                // The email is not trusted, so the login may only move to the active account once its owner confirms.
+                // The suspended account's link has to go first, otherwise it blocks the pending link.
+                $transaction = $DB->start_delegated_transaction();
+                $linkedlogin->delete();
+                \auth_oauth2\api::send_confirm_link_login_email($userinfo, $issuer, $relinkuser->id);
+                $transaction->allow_commit();
+
+                $emailconfirm = get_string('emailconfirmlink', 'auth_oauth2');
+                $message = get_string('emailconfirmlinksent', 'auth_oauth2', $relinkuser->email);
+                $this->print_confirm_required($emailconfirm, $message);
+                exit();
+            }
+
+            // Update the OAuth2 linked login to point to the active user account.
+            $linkedlogin->set('userid', $relinkuser->id);
+            $linkedlogin->set('timemodified', time());
+            $linkedlogin->update();
+
+            // Update user fields and continue with login.
+            $userinfo = $this->update_user($userinfo, $relinkuser);
+            $userwasmapped = true;
         }
 
         if (!$userwasmapped) {
