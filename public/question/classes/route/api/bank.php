@@ -204,6 +204,7 @@ class bank {
                 ],
             ),
         ],
+        requirelogin: new require_login(true),
     )]
     /**
      * Return a list of question categories with names and info formatted for output.
@@ -220,7 +221,7 @@ class bank {
         module $coursemodulecontext,
         question_category_selector $categoryselector,
     ): payload_response {
-        require_login();
+        question_bank_helper::require_category_list_access($coursemodulecontext);
         $categories = $categoryselector->get_categories_for_contexts($coursemodulecontext->id, top: true);
         return new payload_response(
             request: $request,

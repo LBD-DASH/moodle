@@ -23,6 +23,7 @@ use core\context\course;
 use core\context\module;
 use core\context_helper;
 use core\di;
+use core\exception\access_denied_exception;
 use core\task\manager;
 use moodle_database;
 use moodle_url;
@@ -801,5 +802,26 @@ class question_bank_helper {
             $banks = array_merge($banks, $privatebanks);
         }
         return $banks;
+    }
+
+    /**
+     * Ensure the current user may list the question categories in a question bank module.
+     *
+     * The user must be able to access the module's course, the module must be visible to them,
+     * and they must hold at least one question bank capability in the module's own context.
+     *
+     * @param module $modulecontext The context of the question bank module.
+     * @throws access_denied_exception If the user may not list the categories.
+     */
+    public static function require_category_list_access(module $modulecontext): void {
+        [$course, $cm] = get_course_and_cm_from_cmid($modulecontext->instanceid);
+        $capabilities = array_merge(question_edit_contexts::$caps['editq'], question_edit_contexts::$caps['categories']);
+        if (
+            ($course->id != SITEID && !can_access_course($course))
+            || !$cm->uservisible
+            || !has_any_capability($capabilities, $modulecontext)
+        ) {
+            throw new access_denied_exception('nopermissions', 'error', '', get_string('categories', 'question'));
+        }
     }
 }
