@@ -39,24 +39,33 @@ $PAGE->set_url($url);
 $PAGE->set_pagelayout('secure');
 $PAGE->set_title(get_string('unauthemail', 'factor_email'));
 $PAGE->set_cacheable(false);
-$instance = $DB->get_record('tool_mfa', ['id' => $instanceid]);
 $factor = \tool_mfa\plugininfo\factor::get_factor('email');
 
 // If pass is set, do checks and pass for this session.
 // Require login to force $SESSION and user, and pass for that session.
-if (!empty($instance) && $pass != 0 && $secret != 0) {
+if ($pass != 0 && $secret != 0) {
     require_login();
     if ($factor->get_state() === \tool_mfa\plugininfo\factor::STATE_LOCKED) {
         // Redirect through to auth, this will bounce them to the next factor.
         redirect(new moodle_url('/admin/tool/mfa/auth.php'));
     }
-    // Check the code with the same measures on the page entry.
-    if ($instance->secret != $secret) {
+    // The code may only pass the session of the user it was issued to, and only while it is valid.
+    $instance = $DB->get_record('tool_mfa', [
+        'id' => $instanceid,
+        'userid' => $USER->id,
+        'factor' => 'email',
+        'revoked' => 0,
+    ]);
+    $duration = (int) get_config('factor_email', 'duration');
+    if (empty($instance) || empty($instance->secret)
+            || $instance->timecreated + $duration <= time()
+            || !hash_equals((string) $instance->secret, (string) $secret)) {
         \tool_mfa\manager::sleep_timer();
         $factor->increment_lock_counter();
         throw new moodle_exception('error:parameters', 'factor_email');
     }
-    $factor = \tool_mfa\plugininfo\factor::get_factor('email');
+    // Codes are single use.
+    $DB->delete_records('tool_mfa', ['id' => $instance->id, 'userid' => $USER->id, 'factor' => 'email']);
     $factor->set_state(\tool_mfa\plugininfo\factor::STATE_PASS);
     // If wantsurl is already set in session, go to it.
     if (!empty($SESSION->wantsurl)) {
@@ -75,7 +84,9 @@ if ($form->is_cancelled()) {
 // If submitted without the pass param, is a cancel request - do checks and revoke email factor.
 if ($fromform = $form->get_data()) {
     // Only allow revoke attempts from requests with a valid instance and secret.
-    if (empty($instance) || empty($secret) || $instance->secret != $secret) {
+    $instance = $DB->get_record('tool_mfa', ['id' => $instanceid, 'factor' => 'email']);
+    if (empty($instance) || empty($secret) || empty($instance->secret)
+            || !hash_equals((string) $instance->secret, (string) $secret)) {
         $message = get_string('error:badcode', 'factor_email');
     } else {
         $user = $DB->get_record('user', ['id' => $instance->userid]);
