@@ -347,6 +347,11 @@ class manager {
      * @return bool Return true enabled and allowed.
      */
     public function is_action_enabled_in_context(\context $context, string $actionclass): bool {
+        // A block inherits the AI settings of the course, category or module it is placed in.
+        if ($context->contextlevel == CONTEXT_BLOCK) {
+            $context = $context->get_parent_context();
+        }
+
         // Only check if we are in a supported context.
         if (in_array($context->contextlevel, [CONTEXT_COURSE, CONTEXT_COURSECAT, CONTEXT_MODULE])) {
             // Return false if AI tools is not enabled at the course level.
