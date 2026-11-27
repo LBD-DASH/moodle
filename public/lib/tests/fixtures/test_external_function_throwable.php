@@ -71,6 +71,7 @@ class test_external_function_throwable extends external_api {
             $function->component = 'fake';
             $function->capabilities = '';
             $function->services = 'moodle_mobile_app';
+            $function->type = 'read';
             $function->loginrequired = false;
         }
 
