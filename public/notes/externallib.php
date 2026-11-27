@@ -242,6 +242,7 @@ class core_notes_external extends external_api {
             throw new moodle_exception('notesdisabled', 'notes');
         }
         $warnings = array();
+        $todelete = [];
         foreach ($params['notes'] as $noteid) {
             $note = note_load($noteid);
             if (isset($note->id)) {
@@ -249,10 +250,16 @@ class core_notes_external extends external_api {
                 $context = context_course::instance($note->courseid);
                 self::validate_context($context);
                 require_capability('moodle/notes:manage', $context);
-                note_delete($note);
+                if (!note_can_manage($note)) {
+                    throw new moodle_exception('nopermissiontodelete', 'notes');
+                }
+                $todelete[] = $note;
             } else {
                 $warnings[] = array('item'=>'note', 'itemid'=>$noteid, 'warningcode'=>'badid', 'message'=>'Note does not exist');
             }
+        }
+        foreach ($todelete as $note) {
+            note_delete($note);
         }
         return $warnings;
     }
@@ -313,6 +320,9 @@ class core_notes_external extends external_api {
                 $context = context_course::instance($note->courseid);
                 self::validate_context($context);
                 require_capability('moodle/notes:view', $context);
+                if (!note_can_view($note)) {
+                    throw new moodle_exception('notesnotvisible', 'notes');
+                }
 
                 [$gotnote['text'], $gotnote['format']] = util::format_text(
                     $note->content,
@@ -409,6 +419,7 @@ class core_notes_external extends external_api {
         }
 
         $warnings = array();
+        $toupdate = [];
         foreach ($params['notes'] as $note) {
             $notedetails = note_load($note['id']);
             if (isset($notedetails->id)) {
@@ -416,41 +427,51 @@ class core_notes_external extends external_api {
                 $context = context_course::instance($notedetails->courseid);
                 self::validate_context($context);
                 require_capability('moodle/notes:manage', $context);
-
-                $dbnote = new stdClass;
-                $dbnote->id = $note['id'];
-                $dbnote->content = $note['text'];
-                $dbnote->format = util::validate_format($note['format']);
-                // Get the state ('personal', 'course', 'site').
-                switch ($note['publishstate']) {
-                    case 'personal':
-                        $dbnote->publishstate = NOTES_STATE_DRAFT;
-                        break;
-                    case 'course':
-                        $dbnote->publishstate = NOTES_STATE_PUBLIC;
-                        break;
-                    case 'site':
-                        $dbnote->publishstate = NOTES_STATE_SITE;
-                        $dbnote->courseid = SITEID;
-                        break;
-                    default:
-                        $warnings[] = array('item' => 'note',
-                                            'itemid' => $note["id"],
-                                            'warningcode' => 'badparam',
-                                            'message' => 'Provided publishstate incorrect');
-                        break;
+                if (!note_can_manage($notedetails)) {
+                    throw new moodle_exception('nopermissions', 'error', '', get_string('editnote', 'notes'));
                 }
-                if (!note_save($dbnote)) {
-                    $warnings[] = array('item' => 'note',
-                                        'itemid' => $note["id"],
-                                        'warningcode' => 'savedfailed',
-                                        'message' => 'Note could not be modified');
-                }
+                $toupdate[] = [$note, $notedetails];
             } else {
                 $warnings[] = array('item' => 'note',
                                     'itemid' => $note["id"],
                                     'warningcode' => 'badid',
                                     'message' => 'Note does not exist');
+            }
+        }
+
+        foreach ($toupdate as [$note, $notedetails]) {
+            $dbnote = new stdClass();
+            $dbnote->id = $notedetails->id;
+            $dbnote->content = $note['text'];
+            $dbnote->format = util::validate_format($note['format']);
+            // Get the state ('personal', 'course', 'site').
+            switch ($note['publishstate']) {
+                case 'personal':
+                    $dbnote->publishstate = NOTES_STATE_DRAFT;
+                    break;
+                case 'course':
+                    $dbnote->publishstate = NOTES_STATE_PUBLIC;
+                    break;
+                case 'site':
+                    $dbnote->publishstate = NOTES_STATE_SITE;
+                    $dbnote->courseid = SITEID;
+                    break;
+                default:
+                    $warnings[] = [
+                        'item' => 'note',
+                        'itemid' => $note["id"],
+                        'warningcode' => 'badparam',
+                        'message' => 'Provided publishstate incorrect',
+                    ];
+                    break;
+            }
+            if (!note_save($dbnote)) {
+                $warnings[] = [
+                    'item' => 'note',
+                    'itemid' => $note["id"],
+                    'warningcode' => 'savedfailed',
+                    'message' => 'Note could not be modified',
+                ];
             }
         }
         return $warnings;
