@@ -83,6 +83,11 @@ class explain_text extends external_api {
         if (!utils::is_course_assist_available()) {
             throw new \moodle_exception('nocourseassist', 'aiplacement_courseassist');
         }
+        require_capability('aiplacement/courseassist:explain_text', $context);
+        if (!utils::is_course_assist_action_available($context, \core_ai\aiactions\explain_text::class)) {
+            throw new \moodle_exception('nocourseassist', 'aiplacement_courseassist');
+        }
+        $contextid = $context->id;
 
         // Prepare the action.
         $action = new \core_ai\aiactions\explain_text(

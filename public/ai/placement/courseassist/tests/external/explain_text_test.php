@@ -51,6 +51,7 @@ final class explain_text_test extends \advanced_testcase {
         $mockmanager->method('process_action')->willReturn($response);
         $mockmanager->method('is_action_available')->willReturn(true);
         $mockmanager->method('is_action_enabled')->willReturn(true);
+        $mockmanager->method('is_action_enabled_in_context')->willReturn(true);
         $mockmanager->method('get_providers_for_actions')->willReturn([
             explain_text::class => ['aiprovider_openai'],
         ]);
