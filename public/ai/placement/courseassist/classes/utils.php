@@ -44,6 +44,30 @@ class utils {
     }
 
     /**
+     * Check if a course assist action is available to the current user in the context.
+     *
+     * @param \context $context The context.
+     * @param string $actionclass The fully qualified action class name.
+     * @param bool $checkcontext If true, check the action is enabled in the context.
+     * @return bool True if the user may run the action in this context.
+     */
+    public static function is_course_assist_action_available(
+        \context $context,
+        string $actionclass,
+        bool $checkcontext = true,
+    ): bool {
+        if (!in_array($actionclass, [summarise_text::class, explain_text::class], true)) {
+            return false;
+        }
+
+        $manager = \core\di::get(manager::class);
+        return has_capability('aiplacement/courseassist:' . $actionclass::get_basename(), $context)
+            && $manager->is_action_available($actionclass)
+            && $manager->is_action_enabled('aiplacement_courseassist', $actionclass)
+            && (!$checkcontext || $manager->is_action_enabled_in_context($context, $actionclass));
+    }
+
+    /**
      * Get all the actions available and return action data for template.
      *
      * @param \context $context The context.
@@ -52,14 +76,9 @@ class utils {
      */
     public static function get_actions_available(\context $context, bool $checkcontext = true): array {
         $actions = [];
-        $manager = \core\di::get(manager::class);
 
         // Summarise text.
-        if (has_capability('aiplacement/courseassist:summarise_text', $context)
-            && $manager->is_action_available(summarise_text::class)
-            && $manager->is_action_enabled('aiplacement_courseassist', summarise_text::class)
-            && (!$checkcontext || $manager->is_action_enabled_in_context($context, summarise_text::class))
-        ) {
+        if (self::is_course_assist_action_available($context, summarise_text::class, $checkcontext)) {
             $actions[] = [
                 'action' => 'summarise_text',
                 'buttontext' => get_string('summarise', 'aiplacement_courseassist'),
@@ -68,11 +87,7 @@ class utils {
         }
 
         // Explain text.
-        if (has_capability('aiplacement/courseassist:explain_text', $context)
-            && $manager->is_action_available(explain_text::class)
-            && $manager->is_action_enabled('aiplacement_courseassist', explain_text::class)
-            && (!$checkcontext || $manager->is_action_enabled_in_context($context, explain_text::class))
-        ) {
+        if (self::is_course_assist_action_available($context, explain_text::class, $checkcontext)) {
             $actions[] = [
                 'action' => 'explain_text',
                 'buttontext' => get_string('explain', 'aiplacement_courseassist'),
